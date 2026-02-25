@@ -7,9 +7,9 @@ from mcstatus import JavaServer
 API_URL = "https://web-production-79e19.up.railway.app/log"
 API_KEY = "secret123"
 
-# Minecraft-specific tuning
-WORKERS = 600
-MC_TIMEOUT = 1.2  # MC servers respond fast if real
+# SAFE for Railway (600 is too high)
+WORKERS = 120
+MC_TIMEOUT = 1.5
 
 DOMAINS = [
     "minefort.com","aternos.me","server.pro","mc.gg",
@@ -22,7 +22,6 @@ DOMAINS = [
     "playmc.net","playserver.net","multiplayer.gg"
 ]
 
-# Names actually common in Minecraft server naming
 COMMON_NAMES = [
     "mc","play","smp","pvp","survival","lifesteal",
     "skyblock","bedwars","network","hub","proxy",
@@ -33,11 +32,13 @@ COMMON_NAMES = [
     "test","dev","beta","alpha","gg","live","online"
 ]
 
+# Prevent duplicate spam to API
+sent_cache = set()
+
 def generate_name():
     return f"{random.choice(COMMON_NAMES)}{random.randint(1,999)}"
 
 async def ping_minecraft(loop, address):
-    """Fast Minecraft Java ping using mcstatus in executor."""
     try:
         server = await loop.run_in_executor(
             None,
@@ -53,17 +54,38 @@ async def ping_minecraft(loop, address):
     except Exception:
         return None
 
-async def send_batch(session, batch):
-    if not batch:
+async def send_to_api(session, address, online, max_players, version):
+    # Deduplicate
+    if address in sent_cache:
         return
-    try:
-        headers = {"x-api-key": API_KEY}
-        async with session.post(API_URL, json=batch, headers=headers) as resp:
-            print(f"[API {resp.status}] Sent {len(batch)} servers")
-    except:
-        pass
 
-async def worker(semaphore, session, results):
+    payload = {
+        "ip": address,
+        "info": {
+            "players": online,
+            "max_players": max_players,
+            "version": version,
+            "source": "minecraft-scanner"
+        }
+    }
+
+    headers = {
+        "x-api-key": API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with session.post(API_URL, json=payload, headers=headers) as resp:
+            if resp.status == 200:
+                sent_cache.add(address)
+                print(f"[API SENT] {address} ({online}/{max_players})")
+            else:
+                text = await resp.text()
+                print(f"[API ERROR {resp.status}] {address} -> {text}")
+    except Exception as e:
+        print(f"[API FAILED] {address} -> {e}")
+
+async def worker(semaphore, session):
     loop = asyncio.get_running_loop()
 
     while True:
@@ -77,44 +99,32 @@ async def worker(semaphore, session, results):
         if not status:
             continue
 
-        # Minecraft-specific validity checks
+        # Strong Minecraft validity filters
         if status.players is None:
             continue
+
         if status.players.max <= 0:
             continue
 
         online = status.players.online
         max_players = status.players.max
+
+        # Ignore fake placeholder servers (VERY IMPORTANT)
+        if online == 0 and max_players == 0:
+            continue
+
         version = status.version.name if status.version else "unknown"
 
         print(f"[MC FOUND] {address} ({online}/{max_players}) {version}")
 
-        results.append({
-            "ip": address,
-            "info": {
-                "players": online,
-                "max_players": max_players,
-                "version": version,
-                "source": "minecraft-scanner"
-            }
-        })
-
-async def batch_sender(session, results):
-    """Batch API sender to reduce HTTP overhead (important for MC scans)"""
-    while True:
-        await asyncio.sleep(2)
-        if results:
-            batch = results[:]
-            results.clear()
-            await send_batch(session, batch)
+        await send_to_api(session, address, online, max_players, version)
 
 async def main():
     semaphore = asyncio.Semaphore(WORKERS)
-    results = []
 
     connector = aiohttp.TCPConnector(
         limit=WORKERS,
-        ttl_dns_cache=300,  # Huge speed boost for repeated domains
+        ttl_dns_cache=300,
         ssl=False
     )
 
@@ -126,11 +136,9 @@ async def main():
     ) as session:
 
         tasks = [
-            asyncio.create_task(worker(semaphore, session, results))
+            asyncio.create_task(worker(semaphore, session))
             for _ in range(WORKERS)
         ]
-
-        tasks.append(asyncio.create_task(batch_sender(session, results)))
 
         await asyncio.gather(*tasks)
 
