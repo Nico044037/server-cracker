@@ -1,156 +1,152 @@
-import asyncio
 import random
-import aiohttp
-import socket
+import threading
+import time
+from fastapi import FastAPI
 from mcstatus import JavaServer
 
-# ===== CONFIG =====
-API_URL = "https://web-production-79e19.up.railway.app/log"
-API_KEY = "secret123"
+app = FastAPI(title="Minecraft Server Finder API")
 
-WORKERS = 1000        # Increase for more speed (300–800 recommended)
-MC_TIMEOUT = 1.5     # Minecraft servers respond fast if real
-BATCH_INTERVAL = 0   # Seconds between API batch sends
-
-# Minecraft hosting + common ecosystems
+# Expanded host list
 DOMAINS = [
-    "minefort.com","aternos.me","server.pro","mc.gg",
-    "playit.gg","aternos.org","falixsrv.me","exaroton.com",
-    "pebble.host","sparked.host","revivenode.com",
-    "apexmc.co","shockbyte.com","bisecthosting.com",
-    "ggservers.com","mcprohosting.com","meloncube.net",
-    "noip.me","ddns.net","duckdns.org","hopto.org",
-    "playit.cloud","minecraft.host","minecraftserver.io",
-    "playmc.net","playserver.net","multiplayer.gg"
+    "minefort.com", "aternos.me", "server.pro", "zapto.org",
+    "mc.gg", "playit.gg", "play.hosting", "minehut.gg",
+    "aternos.org", "freemcserver.net", "falixsrv.net",
+    "ploudos.com", "skynode.pro", "serverminer.com",
+    "mcserver.ws", "mcserver.us", "mcserver.io",
+    "ggservers.com", "scalacube.com", "holy.gg",
+    "hosthorde.net", "cubedhost.com"
 ]
 
-# Realistic Minecraft server name patterns
 COMMON_NAMES = [
-    "mc","play","smp","pvp","survival","lifesteal",
-    "skyblock","bedwars","network","hub","proxy",
-    "factions","prison","anarchy","vanilla","modded",
-    "earth","towny","pixelmon","forge","fabric",
-    "nova","cosmic","vortex","zenith","apex",
-    "realm","world","kingdom","craft","cube","mine",
-    "test","dev","beta","alpha","gg","live","online"
+    "mc", "play", "survival", "pvp", "smp", "lobby", "hub",
+    "skyblock", "bedwars", "lifesteal", "craft", "mine",
+    "vanilla", "network", "earth", "fun", "pro", "official",
+    "test", "server", "minecraft", "anarchy", "minigames",
+    "pixel", "realm", "world", "hardcore", "creative"
 ]
+
+THREADS = 40
+TIMEOUT = 2
+
+found_servers = {}
+lock = threading.Lock()
+scanner_running = False
+total_checked = 0
+
 
 def generate_name():
-    return f"{random.choice(COMMON_NAMES)}{random.randint(1, 999)}"
+    base = random.choice(COMMON_NAMES)
+    patterns = [
+        base,
+        f"{base}{random.randint(1, 999)}",
+        f"{base}{random.randint(1, 99)}",
+        f"play{base}",
+        f"{base}mc",
+        f"{random.choice(COMMON_NAMES)}{random.randint(1, 999)}",
+    ]
+    return random.choice(patterns)
 
-async def ping_minecraft(loop, address):
-    """Fast Minecraft Java status ping"""
-    try:
-        server = await loop.run_in_executor(
-            None,
-            lambda: JavaServer.lookup(address)
-        )
 
-        status = await loop.run_in_executor(
-            None,
-            lambda: server.status(timeout=MC_TIMEOUT)
-        )
+def check_server():
+    global total_checked
 
-        return status
-
-    except (TimeoutError, ConnectionError, OSError, socket.gaierror):
-        return None
-    except Exception:
-        return None
-
-async def send_batch(session, batch):
-    """Send multiple found MC servers in one request (much faster)"""
-    if not batch:
-        return
-
-    headers = {"x-api-key": API_KEY}
-
-    try:
-        async with session.post(API_URL, json=batch, headers=headers) as resp:
-            print(f"[API {resp.status}] Sent {len(batch)} servers")
-    except Exception as e:
-        print(f"[API ERROR] {e}")
-
-async def worker(semaphore, session, results):
-    loop = asyncio.get_running_loop()
-
-    while True:
+    while scanner_running:
         name = generate_name()
         domain = random.choice(DOMAINS)
         address = f"{name}.{domain}"
 
-        # DEBUG: shows active scanning (important)
-        print(f"[SCAN] {address}")
+        total_checked += 1
 
-        async with semaphore:
-            status = await ping_minecraft(loop, address)
+        try:
+            server = JavaServer.lookup(address, timeout=TIMEOUT)
+            status = server.status()
 
-        # CRITICAL: must be continue, NOT return (prevents dead workers)
-        if not status:
-            continue
+            online = status.players.online
+            max_players = status.players.max
 
-        if status.players is None:
-            continue
+            # Ignore placeholder servers (0/0)
+            if online == 0 and max_players == 0:
+                return
 
-        if status.players.max <= 0:
-            continue
+            if max_players == 0:
+                return
 
-        online = status.players.online
-        max_players = status.players.max
-        version = status.version.name if status.version else "unknown"
+            with lock:
+                if address not in found_servers:
+                    found_servers[address] = {
+                        "address": address,
+                        "online_players": online,
+                        "max_players": max_players,
+                        "timestamp": int(time.time())
+                    }
+                    print(f"[FOUND] {address} {online}/{max_players}")
 
-        print(f"[MC FOUND] {address} ({online}/{max_players}) {version}")
+        except:
+            pass
 
-        results.append({
-            "ip": address,
-            "info": {
-                "players": online,
-                "max_players": max_players,
-                "version": version,
-                "source": "minecraft-scanner"
-            }
-        })
 
-async def batch_sender(session, results):
-    """Continuously sends results to your API"""
-    while True:
-        await asyncio.sleep(BATCH_INTERVAL)
+def scanner_loop():
+    threads = []
+    for _ in range(THREADS):
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        threads.append(t)
 
-        if results:
-            batch = results[:]
-            results.clear()
-            await send_batch(session, batch)
 
-async def main():
-    print("=== MINECRAFT SCANNER STARTED ===")
+def worker():
+    while scanner_running:
+        check_server()
 
-    semaphore = asyncio.Semaphore(WORKERS)
-    results = []
 
-    # ssl=False helps on Windows + Railway environments
-    connector = aiohttp.TCPConnector(
-        limit=WORKERS,
-        ssl=False,
-        ttl_dns_cache=300
-    )
+@app.on_event("startup")
+def auto_start():
+    global scanner_running
+    scanner_running = True
+    threading.Thread(target=scanner_loop, daemon=True).start()
+    print("Scanner started automatically")
 
-    timeout = aiohttp.ClientTimeout(total=10)
 
-    async with aiohttp.ClientSession(
-        connector=connector,
-        timeout=timeout
-    ) as session:
+@app.get("/")
+def root():
+    return {
+        "status": "running",
+        "servers_found": len(found_servers),
+        "total_checked": total_checked,
+        "threads": THREADS
+    }
 
-        # Start MC scanning workers
-        tasks = [
-            asyncio.create_task(worker(semaphore, session, results))
-            for _ in range(WORKERS)
-        ]
 
-        # Start API batch sender
-        tasks.append(asyncio.create_task(batch_sender(session, results)))
+@app.get("/logs")
+def get_logs():
+    return {
+        "count": len(found_servers),
+        "servers": list(found_servers.values())
+    }
 
-        await asyncio.gather(*tasks)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+@app.get("/stats")
+def stats():
+    return {
+        "scanner_running": scanner_running,
+        "servers_found": len(found_servers),
+        "total_checked": total_checked,
+        "domains": len(DOMAINS),
+        "threads": THREADS
+    }
+
+
+@app.post("/start")
+def start_scanner():
+    global scanner_running
+    if not scanner_running:
+        scanner_running = True
+        threading.Thread(target=scanner_loop, daemon=True).start()
+        return {"message": "Scanner started"}
+    return {"message": "Scanner already running"}
+
+
+@app.post("/stop")
+def stop_scanner():
+    global scanner_running
+    scanner_running = False
+    return {"message": "Scanner stopped"}
