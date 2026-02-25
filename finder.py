@@ -13,7 +13,7 @@ TIMEOUT = 2
 DOMAINS = [
     # Original
     "minefort.com","aternos.me","server.pro","mc.gg",
-    "playit.gg","minehut.gg","mcserv.me","duckdns.org",
+    "playit.gg","minehut.gg","duckdns.org",
 
     # Free / popular MC hosts
     "aternos.org","minehut.com","ploudos.com","falixsrv.me",
@@ -44,7 +44,7 @@ DOMAINS = [
     "loca.lt","localto.net","tunnelto.dev","pagekite.me","bore.pub",
 
     # Generic MC-related / vanity domains
-    "mcserver.ws","minecraft.host","minecraft.best",
+    "minecraft.host","minecraft.best",
     "minecraftserver.io","joinmc.link","joinserver.xyz",
     "playmc.net","playmc.org","playmc.xyz","playserver.net",
     "playserver.org","mcnode.net","multiplayer.gg"
