@@ -53,10 +53,6 @@ COMMON_NAMES = [
     "reborn","plus","gg","live","online","host","server"
 ]
 
-# Only for duplicate prevention (NOT a whitelist)
-seen_servers = set()
-lock = threading.Lock()
-
 def generate_name():
     base = random.choice(COMMON_NAMES)
     return f"{base}{random.randint(1,999)}"
@@ -94,12 +90,6 @@ def scan():
                 continue
             if status.players.max == 0:
                 continue
-
-            # Single duplicate protection (NOT whitelist)
-            with lock:
-                if address in seen_servers:
-                    continue
-                seen_servers.add(address)
 
             version = status.version.name if status.version else "unknown"
 
