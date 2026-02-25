@@ -10,23 +10,6 @@ API_KEY = "secret123"
 THREADS = 25
 TIMEOUT = 2
 
-# Toggle whitelist system
-WHITELIST_ENABLED = True
-
-# Full server whitelist (exact match)
-WHITELIST_SERVERS = {
-    # Example:
-    # "play.minefort.com",
-    # "mc.aternos.me",
-}
-
-# Domain whitelist (only log servers from these domains)
-WHITELIST_DOMAINS = {
-    "minefort.com",
-    "aternos.me",
-    "server.pro"
-}
-
 DOMAINS = [
     "minefort.com","aternos.me","server.pro","mc.gg",
     "playit.gg","duckdns.org","aternos.org","ploudos.com","falixsrv.me",
@@ -70,29 +53,13 @@ COMMON_NAMES = [
     "reborn","plus","gg","live","online","host","server"
 ]
 
+# Only for duplicate prevention (NOT a whitelist)
 seen_servers = set()
 lock = threading.Lock()
 
 def generate_name():
     base = random.choice(COMMON_NAMES)
     return f"{base}{random.randint(1,999)}"
-
-def is_whitelisted(address, domain):
-    if not WHITELIST_ENABLED:
-        return True
-
-    address = address.lower()
-    domain = domain.lower()
-
-    # Exact server whitelist
-    if address in WHITELIST_SERVERS:
-        return True
-
-    # Domain-based whitelist
-    if domain in WHITELIST_DOMAINS:
-        return True
-
-    return False
 
 def send_to_api(address, online, max_players, version):
     payload = {
@@ -120,40 +87,30 @@ def scan():
             domain = random.choice(DOMAINS)
             address = f"{name}.{domain}".lower()
 
-            # Whitelist gate (MAIN FIX)
-            if not is_whitelisted(address, domain):
-                continue
-
-            # Pre duplicate check (fast)
-            with lock:
-                if address in seen_servers:
-                    continue
-
             server = JavaServer.lookup(address, timeout=TIMEOUT)
             status = server.status()
 
             if not status:
                 continue
-
             if status.players.max == 0:
                 continue
 
-            version = status.version.name if status.version else "unknown"
-
-            # Final duplicate protection (thread-safe)
+            # Single duplicate protection (NOT whitelist)
             with lock:
                 if address in seen_servers:
                     continue
                 seen_servers.add(address)
 
-            print(f"[LOGGED] {address} | {status.players.online}/{status.players.max} | {version}")
+            version = status.version.name if status.version else "unknown"
 
+            print(f"[FOUND] {address} | {status.players.online}/{status.players.max} | {version}")
             send_to_api(address, status.players.online, status.players.max, version)
 
         except Exception:
-            continue  # never kill thread
+            continue
 
 def main():
+    print(f"Starting scanner with {THREADS} threads...")
     for _ in range(THREADS):
         threading.Thread(target=scan, daemon=True).start()
 
