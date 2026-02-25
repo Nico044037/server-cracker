@@ -13,10 +13,10 @@ TIMEOUT = 2
 DOMAINS = [
     # Original
     "minefort.com","aternos.me","server.pro","mc.gg",
-    "playit.gg","minehut.gg","duckdns.org",
+    "playit.gg","duckdns.org",
 
     # Free / popular MC hosts
-    "aternos.org","minehut.com","ploudos.com","falixsrv.me",
+    "aternos.org","ploudos.com","falixsrv.me",
     "freemc.host","exaroton.com","omgserv.com","scalacube.pro",
     "skynode.pro","pebble.host","sparked.host","revivenode.com",
     "bloom.host","titannodes.com","envyhost.net","winternode.com",
@@ -30,7 +30,7 @@ DOMAINS = [
 
     # Panel / subdomain ecosystems
     "my.pebble.host","panel.ggservers.com","panel.bisecthosting.com",
-    "panel.apexmc.co","panel.falixsrv.me","node.minehut.gg",
+    "panel.apexmc.co","panel.falixsrv.me",
 
     # Dynamic DNS (very common for self-hosted servers)
     "no-ip.org","noip.me","ddns.net","duckdns.org","hopto.org",
