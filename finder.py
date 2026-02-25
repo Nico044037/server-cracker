@@ -1,111 +1,138 @@
-import threading
+import asyncio
 import random
-import time
-import requests
+import aiohttp
+import socket
 from mcstatus import JavaServer
 
 API_URL = "https://web-production-79e19.up.railway.app/log"
 API_KEY = "secret123"
 
-THREADS = 25
-TIMEOUT = 2
+# Minecraft-specific tuning
+WORKERS = 600
+MC_TIMEOUT = 1.2  # MC servers respond fast if real
 
 DOMAINS = [
     "minefort.com","aternos.me","server.pro","mc.gg",
-    "playit.gg","duckdns.org","aternos.org","ploudos.com","falixsrv.me",
-    "freemc.host","exaroton.com","omgserv.com","scalacube.pro",
-    "skynode.pro","pebble.host","sparked.host","revivenode.com",
-    "bloom.host","titannodes.com","envyhost.net","winternode.com",
-    "apexmc.co","shockbyte.com","bisecthosting.com","ggservers.com",
-    "mcprohosting.com","meloncube.net","nodecraft.games",
-    "cubedhost.com","hosthorde.com","logicservers.com",
-    "serverminer.com","zap-hosting.com","zaphosting.com",
-    "g-portal.com","nitrado.net","pingperfect.com",
-    "my.pebble.host","panel.ggservers.com","panel.bisecthosting.com",
-    "panel.apexmc.co","panel.falixsrv.me",
-    "no-ip.org","noip.me","ddns.net","duckdns.org","hopto.org",
-    "servegame.com","serveftp.com","servehttp.com","myftp.biz",
-    "dynu.net","dyndns.org","dynv6.net","afraid.org",
-    "freedns.afraid.org","redirectme.net","dnsalias.net",
-    "mooo.com","sytes.net","homeip.net",
-    "playit.cloud","ngrok.io","ngrok-free.app","trycloudflare.com",
-    "loca.lt","localto.net","tunnelto.dev","pagekite.me","bore.pub",
-    "minecraft.host","minecraft.best","minecraftserver.io",
-    "joinmc.link","joinserver.xyz","playmc.net","playmc.org",
-    "playmc.xyz","playserver.net","playserver.org","mcnode.net","multiplayer.gg"
+    "playit.gg","aternos.org","falixsrv.me","exaroton.com",
+    "pebble.host","sparked.host","revivenode.com",
+    "apexmc.co","shockbyte.com","bisecthosting.com",
+    "ggservers.com","mcprohosting.com","meloncube.net",
+    "noip.me","ddns.net","duckdns.org","hopto.org",
+    "playit.cloud","minecraft.host","minecraftserver.io",
+    "playmc.net","playserver.net","multiplayer.gg"
 ]
 
+# Names actually common in Minecraft server naming
 COMMON_NAMES = [
-    "mc","play","survival","pvp","smp","lobby",
-    "skyblock","bedwars","lifesteal","network",
-    "factions","prison","creative","hardcore","anarchy",
-    "kitpvp","uhc","duels","minigames","arcade",
-    "practice","events","vanilla","modded","economy",
-    "oneblock","earth","towny","gens","gen","opprison",
-    "opskyblock","boxpvp","crystalpvp","roleplay",
-    "rpg","pixelmon","cobblemon","forge","fabric",
-    "hub","main","proxy","bungee","velocity","core",
-    "global","central","official","public","premium",
-    "craft","block","cube","mine","realm","world",
-    "arena","combat","clan","wars","battle",
-    "nova","zenith","cosmic","lunar","nebula",
-    "test","dev","beta","alpha","season","classic",
-    "reborn","plus","gg","live","online","host","server"
+    "mc","play","smp","pvp","survival","lifesteal",
+    "skyblock","bedwars","network","hub","proxy",
+    "factions","prison","anarchy","vanilla","modded",
+    "earth","towny","pixelmon","forge","fabric",
+    "nova","cosmic","vortex","zenith","apex",
+    "realm","world","kingdom","craft","cube","mine",
+    "test","dev","beta","alpha","gg","live","online"
 ]
 
 def generate_name():
-    base = random.choice(COMMON_NAMES)
-    return f"{base}{random.randint(1,999)}"
+    return f"{random.choice(COMMON_NAMES)}{random.randint(1,999)}"
 
-def send_to_api(address, online, max_players, version):
-    payload = {
-        "ip": address,
-        "info": {
-            "players": online,
-            "max_players": max_players,
-            "version": version,
-            "source": "railway-finder"
-        }
-    }
-
-    headers = {"x-api-key": API_KEY}
-
+async def ping_minecraft(loop, address):
+    """Fast Minecraft Java ping using mcstatus in executor."""
     try:
-        r = requests.post(API_URL, json=payload, headers=headers, timeout=5)
-        print(f"[API {r.status_code}] {address}")
-    except Exception as e:
-        print(f"[API FAILED] {address} -> {e}")
+        server = await loop.run_in_executor(
+            None,
+            lambda: JavaServer.lookup(address)
+        )
+        status = await loop.run_in_executor(
+            None,
+            lambda: server.status(timeout=MC_TIMEOUT)
+        )
+        return status
+    except (TimeoutError, ConnectionError, OSError, socket.gaierror):
+        return None
+    except Exception:
+        return None
 
-def scan():
+async def send_batch(session, batch):
+    if not batch:
+        return
+    try:
+        headers = {"x-api-key": API_KEY}
+        async with session.post(API_URL, json=batch, headers=headers) as resp:
+            print(f"[API {resp.status}] Sent {len(batch)} servers")
+    except:
+        pass
+
+async def worker(semaphore, session, results):
+    loop = asyncio.get_running_loop()
+
     while True:
-        try:
-            name = generate_name()
-            domain = random.choice(DOMAINS)
-            address = f"{name}.{domain}".lower()
+        name = generate_name()
+        domain = random.choice(DOMAINS)
+        address = f"{name}.{domain}"
 
-            server = JavaServer.lookup(address, timeout=TIMEOUT)
-            status = server.status()
+        async with semaphore:
+            status = await ping_minecraft(loop, address)
 
-            if not status:
-                continue
-            if status.players.max == 0:
-                continue
-
-            version = status.version.name if status.version else "unknown"
-
-            print(f"[FOUND] {address} | {status.players.online}/{status.players.max} | {version}")
-            send_to_api(address, status.players.online, status.players.max, version)
-
-        except Exception:
+        if not status:
             continue
 
-def main():
-    print(f"Starting scanner with {THREADS} threads...")
-    for _ in range(THREADS):
-        threading.Thread(target=scan, daemon=True).start()
+        # Minecraft-specific validity checks
+        if status.players is None:
+            continue
+        if status.players.max <= 0:
+            continue
 
+        online = status.players.online
+        max_players = status.players.max
+        version = status.version.name if status.version else "unknown"
+
+        print(f"[MC FOUND] {address} ({online}/{max_players}) {version}")
+
+        results.append({
+            "ip": address,
+            "info": {
+                "players": online,
+                "max_players": max_players,
+                "version": version,
+                "source": "minecraft-scanner"
+            }
+        })
+
+async def batch_sender(session, results):
+    """Batch API sender to reduce HTTP overhead (important for MC scans)"""
     while True:
-        time.sleep(10)
+        await asyncio.sleep(2)
+        if results:
+            batch = results[:]
+            results.clear()
+            await send_batch(session, batch)
+
+async def main():
+    semaphore = asyncio.Semaphore(WORKERS)
+    results = []
+
+    connector = aiohttp.TCPConnector(
+        limit=WORKERS,
+        ttl_dns_cache=300,  # Huge speed boost for repeated domains
+        ssl=False
+    )
+
+    timeout = aiohttp.ClientTimeout(total=10)
+
+    async with aiohttp.ClientSession(
+        connector=connector,
+        timeout=timeout
+    ) as session:
+
+        tasks = [
+            asyncio.create_task(worker(semaphore, session, results))
+            for _ in range(WORKERS)
+        ]
+
+        tasks.append(asyncio.create_task(batch_sender(session, results)))
+
+        await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
