@@ -4,8 +4,14 @@ import time
 import requests
 from mcstatus import JavaServer
 
-# Your existing API endpoint
 API_URL = "https://web-production-79e19.up.railway.app/logs"
+API_KEY = "secret123"  # your key
+
+HEADERS = {
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {API_KEY}"  # Most common format
+    # If your API uses x-api-key instead, tell me and I'll switch it
+}
 
 DOMAINS = [
     "minefort.com", "aternos.me", "server.pro", "zapto.org",
@@ -28,27 +34,26 @@ COMMON_NAMES = [
 THREADS = 40
 TIMEOUT = 2
 
-found_cache = set()
+cache = set()
 lock = threading.Lock()
-total_sent = 0
-total_checked = 0
+sent = 0
+checked = 0
 
 
 def generate_name():
     base = random.choice(COMMON_NAMES)
-    patterns = [
+    return random.choice([
         base,
-        f"{base}{random.randint(1, 999)}",
-        f"{base}{random.randint(1, 99)}",
+        f"{base}{random.randint(1,999)}",
+        f"{base}{random.randint(1,99)}",
         f"play{base}",
         f"{base}mc",
-        f"{random.choice(COMMON_NAMES)}{random.randint(1, 999)}",
-    ]
-    return random.choice(patterns)
+        f"{random.choice(COMMON_NAMES)}{random.randint(1,999)}",
+    ])
 
 
 def send_to_api(address, online, max_players):
-    global total_sent
+    global sent
     try:
         payload = {
             "address": address,
@@ -56,21 +61,27 @@ def send_to_api(address, online, max_players):
             "max_players": max_players,
             "timestamp": int(time.time())
         }
-        requests.post(API_URL, json=payload, timeout=3)
-        total_sent += 1
-        print(f"[SENT] {address} ({online}/{max_players})")
+
+        r = requests.post(API_URL, json=payload, headers=HEADERS, timeout=5)
+
+        if r.status_code in (200, 201):
+            sent += 1
+            print(f"[SENT] {address} ({online}/{max_players})")
+        else:
+            print(f"[API ERROR] {r.status_code} -> {r.text}")
+
     except Exception as e:
-        print(f"[API ERROR] {e}")
+        print(f"[REQUEST FAILED] {e}")
 
 
 def worker():
-    global total_checked
+    global checked
 
     while True:
         name = generate_name()
         domain = random.choice(DOMAINS)
         address = f"{name}.{domain}"
-        total_checked += 1
+        checked += 1
 
         try:
             server = JavaServer.lookup(address, timeout=TIMEOUT)
@@ -79,36 +90,33 @@ def worker():
             online = status.players.online
             max_players = status.players.max
 
-            # Ignore fake placeholder servers (0/0)
+            # Skip fake placeholder hosts
             if online == 0 and max_players == 0:
-                return
-
+                continue
             if max_players == 0:
-                return
+                continue
 
             with lock:
-                if address not in found_cache:
-                    found_cache.add(address)
+                if address not in cache:
+                    cache.add(address)
                     send_to_api(address, online, max_players)
 
         except:
-            # Offline / invalid server
             pass
 
 
 def main():
-    print("=== Minecraft Server Finder (API ONLY MODE) ===")
-    print(f"Sending results ONLY to: {API_URL}")
+    print("=== API-ONLY Minecraft Scanner (AUTH MODE) ===")
+    print(f"API: {API_URL}")
+    print("Auth: Bearer API Key enabled")
     print(f"Threads: {THREADS}")
-    print("Local file saving: DISABLED")
-    print("Press CTRL+C to stop.\n")
+    print("Local saving: DISABLED\n")
 
     for _ in range(THREADS):
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
+        threading.Thread(target=worker, daemon=True).start()
 
     while True:
-        print(f"[STATS] Checked: {total_checked} | Sent: {total_sent} | Cached: {len(found_cache)}")
+        print(f"[STATS] Checked: {checked} | Sent: {sent} | Unique: {len(cache)}")
         time.sleep(5)
 
 
