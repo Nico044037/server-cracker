@@ -4,7 +4,7 @@ import time
 import requests
 from mcstatus import JavaServer
 
-API_URL = "https://web-production-79e19.up.railway.app/log"
+API_URL = "http://127.0.0.1:8000/logs"
 API_KEY = "secret123"
 
 HEADERS = {
