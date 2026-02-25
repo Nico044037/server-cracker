@@ -10,7 +10,7 @@ API_KEY = "secret123"
 
 WORKERS = 1000        # Increase for more speed (300–800 recommended)
 MC_TIMEOUT = 1.5     # Minecraft servers respond fast if real
-BATCH_INTERVAL = 2   # Seconds between API batch sends
+BATCH_INTERVAL = 0   # Seconds between API batch sends
 
 # Minecraft hosting + common ecosystems
 DOMAINS = [
