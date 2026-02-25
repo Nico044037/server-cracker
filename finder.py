@@ -4,13 +4,12 @@ import time
 import requests
 from mcstatus import JavaServer
 
-API_URL = "https://web-production-79e19.up.railway.app/logs"
-API_KEY = "secret123"  # your key
+API_URL = "https://web-production-79e19.up.railway.app/log"  # IMPORTANT: /log not /logs
+API_KEY = "secret123"
 
 HEADERS = {
     "Content-Type": "application/json",
-    "Authorization": f"Bearer {API_KEY}"  # Most common format
-    # If your API uses x-api-key instead, tell me and I'll switch it
+    "x-api-key": API_KEY  # MUST match your FastAPI header
 }
 
 DOMAINS = [
@@ -52,21 +51,24 @@ def generate_name():
     ])
 
 
-def send_to_api(address, online, max_players):
+def send_to_api(address, online, max_players, version):
     global sent
     try:
         payload = {
-            "address": address,
-            "online_players": online,
-            "max_players": max_players,
-            "timestamp": int(time.time())
+            "ip": address,  # your API expects "ip"
+            "info": {
+                "players": online,
+                "max_players": max_players,
+                "version": version,
+                "source": "finder"
+            }
         }
 
         r = requests.post(API_URL, json=payload, headers=HEADERS, timeout=5)
 
-        if r.status_code in (200, 201):
+        if r.status_code == 200:
             sent += 1
-            print(f"[SENT] {address} ({online}/{max_players})")
+            print(f"[LOGGED] {address} ({online}/{max_players})")
         else:
             print(f"[API ERROR] {r.status_code} -> {r.text}")
 
@@ -89,8 +91,9 @@ def worker():
 
             online = status.players.online
             max_players = status.players.max
+            version = status.version.name if status.version else "unknown"
 
-            # Skip fake placeholder hosts
+            # Ignore placeholder servers (0/0)
             if online == 0 and max_players == 0:
                 continue
             if max_players == 0:
@@ -99,24 +102,24 @@ def worker():
             with lock:
                 if address not in cache:
                     cache.add(address)
-                    send_to_api(address, online, max_players)
+                    send_to_api(address, online, max_players, version)
 
         except:
             pass
 
 
 def main():
-    print("=== API-ONLY Minecraft Scanner (AUTH MODE) ===")
-    print(f"API: {API_URL}")
-    print("Auth: Bearer API Key enabled")
-    print(f"Threads: {THREADS}")
-    print("Local saving: DISABLED\n")
+    print("=== Minecraft Finder (API MATCH MODE) ===")
+    print(f"Endpoint: {API_URL}")
+    print("Auth Header: x-api-key")
+    print("JSON Format: MATCHED to your FastAPI")
+    print(f"Threads: {THREADS}\n")
 
     for _ in range(THREADS):
         threading.Thread(target=worker, daemon=True).start()
 
     while True:
-        print(f"[STATS] Checked: {checked} | Sent: {sent} | Unique: {len(cache)}")
+        print(f"[STATS] Checked: {checked} | Logged: {sent} | Unique: {len(cache)}")
         time.sleep(5)
 
 
