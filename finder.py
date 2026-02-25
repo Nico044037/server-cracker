@@ -1,12 +1,12 @@
-import random
 import threading
+import random
 import time
-from fastapi import FastAPI
+import requests
 from mcstatus import JavaServer
 
-app = FastAPI(title="Minecraft Server Finder API")
+# Your existing API endpoint
+API_URL = "https://web-production-79e19.up.railway.app/logs"
 
-# Expanded host list
 DOMAINS = [
     "minefort.com", "aternos.me", "server.pro", "zapto.org",
     "mc.gg", "playit.gg", "play.hosting", "minehut.gg",
@@ -28,9 +28,9 @@ COMMON_NAMES = [
 THREADS = 40
 TIMEOUT = 2
 
-found_servers = {}
+found_cache = set()
 lock = threading.Lock()
-scanner_running = False
+total_sent = 0
 total_checked = 0
 
 
@@ -47,14 +47,29 @@ def generate_name():
     return random.choice(patterns)
 
 
-def check_server():
+def send_to_api(address, online, max_players):
+    global total_sent
+    try:
+        payload = {
+            "address": address,
+            "online_players": online,
+            "max_players": max_players,
+            "timestamp": int(time.time())
+        }
+        requests.post(API_URL, json=payload, timeout=3)
+        total_sent += 1
+        print(f"[SENT] {address} ({online}/{max_players})")
+    except Exception as e:
+        print(f"[API ERROR] {e}")
+
+
+def worker():
     global total_checked
 
-    while scanner_running:
+    while True:
         name = generate_name()
         domain = random.choice(DOMAINS)
         address = f"{name}.{domain}"
-
         total_checked += 1
 
         try:
@@ -64,7 +79,7 @@ def check_server():
             online = status.players.online
             max_players = status.players.max
 
-            # Ignore placeholder servers (0/0)
+            # Ignore fake placeholder servers (0/0)
             if online == 0 and max_players == 0:
                 return
 
@@ -72,81 +87,30 @@ def check_server():
                 return
 
             with lock:
-                if address not in found_servers:
-                    found_servers[address] = {
-                        "address": address,
-                        "online_players": online,
-                        "max_players": max_players,
-                        "timestamp": int(time.time())
-                    }
-                    print(f"[FOUND] {address} {online}/{max_players}")
+                if address not in found_cache:
+                    found_cache.add(address)
+                    send_to_api(address, online, max_players)
 
         except:
+            # Offline / invalid server
             pass
 
 
-def scanner_loop():
-    threads = []
+def main():
+    print("=== Minecraft Server Finder (API ONLY MODE) ===")
+    print(f"Sending results ONLY to: {API_URL}")
+    print(f"Threads: {THREADS}")
+    print("Local file saving: DISABLED")
+    print("Press CTRL+C to stop.\n")
+
     for _ in range(THREADS):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
-        threads.append(t)
+
+    while True:
+        print(f"[STATS] Checked: {total_checked} | Sent: {total_sent} | Cached: {len(found_cache)}")
+        time.sleep(5)
 
 
-def worker():
-    while scanner_running:
-        check_server()
-
-
-@app.on_event("startup")
-def auto_start():
-    global scanner_running
-    scanner_running = True
-    threading.Thread(target=scanner_loop, daemon=True).start()
-    print("Scanner started automatically")
-
-
-@app.get("/")
-def root():
-    return {
-        "status": "running",
-        "servers_found": len(found_servers),
-        "total_checked": total_checked,
-        "threads": THREADS
-    }
-
-
-@app.get("/logs")
-def get_logs():
-    return {
-        "count": len(found_servers),
-        "servers": list(found_servers.values())
-    }
-
-
-@app.get("/stats")
-def stats():
-    return {
-        "scanner_running": scanner_running,
-        "servers_found": len(found_servers),
-        "total_checked": total_checked,
-        "domains": len(DOMAINS),
-        "threads": THREADS
-    }
-
-
-@app.post("/start")
-def start_scanner():
-    global scanner_running
-    if not scanner_running:
-        scanner_running = True
-        threading.Thread(target=scanner_loop, daemon=True).start()
-        return {"message": "Scanner started"}
-    return {"message": "Scanner already running"}
-
-
-@app.post("/stop")
-def stop_scanner():
-    global scanner_running
-    scanner_running = False
-    return {"message": "Scanner stopped"}
+if __name__ == "__main__":
+    main()
