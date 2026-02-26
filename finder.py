@@ -52,8 +52,8 @@ SUFFIXES = [
     "core", "online", "plus", "live"
 ]
 
-THREADS = 40
-TIMEOUT = 2
+THREADS = 800
+TIMEOUT = 0
 
 cache = set()
 lock = threading.Lock()
