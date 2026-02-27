@@ -37,7 +37,7 @@ SUFFIXES = [
     "core", "online", "live"
 ]
 
-THREADS = 200  # 800 is overkill and may get you rate-limited
+THREADS = 800  # 800 is overkill and may get you rate-limited
 TIMEOUT = 3    # 0 can hang forever
 
 cache = set()
