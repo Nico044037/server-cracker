@@ -12,23 +12,9 @@ HEADERS = {
     "x-api-key": API_KEY
 }
 
-# Focused + realistic hosting domains (including Aternos priority)
-DOMAINS = [
-    "aternos.me",
-    "aternos.org",
-    "minefort.com",
-    "server.pro",
-    "mc.gg",
-    "playit.gg",
-    "minehut.gg",
-    "ploudos.com",
-    "falixsrv.net",
-    "skynode.pro",
-    "serverminer.com",
-    "ggservers.com"
-]
+# ONLY Minehut
+DOMAIN = "aternos.me"
 
-# Base seed names (used by AI generator)
 COMMON_NAMES = [
     "mc", "play", "survival", "pvp", "smp", "lobby", "hub",
     "skyblock", "bedwars", "lifesteal", "craft", "mine",
@@ -37,7 +23,6 @@ COMMON_NAMES = [
     "hardcore", "creative", "gens", "practice"
 ]
 
-# AI-style word components (dynamic expansion)
 PREFIXES = [
     "nova", "zen", "astro", "pixel", "void", "lunar",
     "apex", "fusion", "quantum", "echo", "vortex",
@@ -49,11 +34,11 @@ SUFFIXES = [
     "mc", "smp", "pvp", "network", "craft", "realm",
     "block", "world", "server", "hub", "lifesteal",
     "skyblock", "survival", "gens", "practice",
-    "core", "online", "plus", "live"
+    "core", "online", "live"
 ]
 
-THREADS = 800
-TIMEOUT = 0
+THREADS = 200  # 800 is overkill and may get you rate-limited
+TIMEOUT = 3    # 0 can hang forever
 
 cache = set()
 lock = threading.Lock()
@@ -62,40 +47,26 @@ checked = 0
 
 
 def ai_generate_name():
-    """
-    AI-style smart name generator (much better than static lists)
-    """
     style = random.randint(0, 6)
 
     if style == 0:
         return random.choice(COMMON_NAMES)
-
     elif style == 1:
         return f"{random.choice(COMMON_NAMES)}{random.randint(1, 999)}"
-
     elif style == 2:
         return f"{random.choice(PREFIXES)}{random.choice(SUFFIXES)}"
-
     elif style == 3:
         return f"play{random.choice(COMMON_NAMES)}"
-
     elif style == 4:
         return f"{random.choice(PREFIXES)}{random.choice(COMMON_NAMES)}"
-
     elif style == 5:
         return f"{random.choice(COMMON_NAMES)}{random.choice(SUFFIXES)}"
-
     else:
         return f"{random.choice(PREFIXES)}{random.choice(SUFFIXES)}{random.randint(1,99)}"
 
 
-def generate_domain():
-    """
-    Smart domain selection (bias toward Aternos for better hits)
-    """
-    if random.random() < 0.6:
-        return random.choice(["aternos.me", "aternos.org"])
-    return random.choice(DOMAINS)
+def generate_minehut_address():
+    return f"{ai_generate_name()}.{DOMAIN}".lower()
 
 
 def send_to_api(address, online, max_players, version):
@@ -107,7 +78,7 @@ def send_to_api(address, online, max_players, version):
                 "players": online,
                 "max_players": max_players,
                 "version": version,
-                "source": "ai-finder"
+                "source": "minehut-finder"
             }
         }
 
@@ -115,7 +86,7 @@ def send_to_api(address, online, max_players, version):
 
         if r.status_code == 200:
             sent += 1
-            print(f"[LOGGED] {address} ({online}/{max_players})")
+            print(f"[LOGGED ONLINE] {address} ({online}/{max_players})")
         else:
             print(f"[API ERROR] {r.status_code} -> {r.text}")
 
@@ -128,13 +99,10 @@ def worker():
 
     while True:
         try:
-            name = ai_generate_name()
-            domain = generate_domain()
-            address = f"{name}.{domain}".lower()
-
+            address = generate_minehut_address()
             checked += 1
 
-            # Prevent duplicate checks (reduces API spam & log filling)
+            # Prevent duplicate checks
             with lock:
                 if address in cache:
                     continue
@@ -143,15 +111,18 @@ def worker():
             server = JavaServer.lookup(address, timeout=TIMEOUT)
             status = server.status()
 
+            # Extract player info safely
             online = status.players.online if status.players else 0
             max_players = status.players.max if status.players else 0
             version = status.version.name if status.version else "unknown"
 
-            # Skip empty/placeholder servers
-            if online == 0 and max_players == 0:
-                continue
-            if max_players == 0:
-                continue
+            # ONLY log real online servers (at least 1 player)
+            if online <= 0:
+                return
+
+            # Extra safeguard against placeholder/ghost servers
+            if max_players <= 0:
+                return
 
             send_to_api(address, online, max_players, version)
 
@@ -160,18 +131,17 @@ def worker():
 
 
 def main():
-    print("=== AI Minecraft Finder (Railway API Mode) ===")
+    print("=== Minehut Online Server Finder ===")
     print(f"Endpoint: {API_URL}")
-    print("Auth Header: x-api-key")
-    print("AI Name Generation: ENABLED")
-    print("Aternos Priority: ENABLED")
+    print("Domain Filter: minehut.gg ONLY")
+    print("Logging: ONLINE servers only (players > 0)")
     print(f"Threads: {THREADS}\n")
 
     for _ in range(THREADS):
         threading.Thread(target=worker, daemon=True).start()
 
     while True:
-        print(f"[STATS] Checked: {checked} | Logged: {sent} | Unique Generated: {len(cache)}")
+        print(f"[STATS] Checked: {checked} | Logged Online: {sent} | Unique: {len(cache)}")
         time.sleep(5)
 
 
