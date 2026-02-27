@@ -44,7 +44,7 @@ SUFFIXES = [
     "block", "world", "server", "hub", "survival", "online"
 ]
 
-THREADS = 150   # safer for IP scanning
+THREADS = 400   # safer for IP scanning
 TIMEOUT = 2
 
 cache = set()
